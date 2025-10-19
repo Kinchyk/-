@@ -10,9 +10,8 @@ class ChatClient:
         self.host = None
         self.port = None
         self.running = False
-        self.buffer = ""  # Буфер для неповних повідомлень
+        self.buffer = ""
 
-        # --- login window ---
         self.win = CTk()
         self.win.geometry("400x300")
         self.win.title("OP Overlord 🍋")
@@ -29,18 +28,15 @@ class ChatClient:
         self.port_entry = CTkEntry(self.win, placeholder_text="8081")
         self.port_entry.pack(pady=5)
 
-        self.login_button = CTkButton(self.win, text="Login", command=self.connect_server)
-        self.login_button.pack(pady=20)
-
+        CTkButton(self.win, text="Login", command=self.connect_server).pack(pady=20)
         self.win.protocol("WM_DELETE_WINDOW", self.close_client)
         self.win.mainloop()
 
     def connect_server(self):
         self.host = self.host_entry.get().strip() or "127.0.0.1"
         self.nickname = self.nickname_entry.get().strip() or "Anon"
-        port_text = self.port_entry.get().strip()
         try:
-            self.port = int(port_text) if port_text else 8081
+            self.port = int(self.port_entry.get().strip() or 8081)
         except ValueError:
             self.show_error("Невірний порт")
             return
@@ -49,7 +45,6 @@ class ChatClient:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.host, self.port))
             self.sock.send(self.nickname.encode('utf-8'))
-            print(f"✅ Підключено до {self.host}:{self.port}")
         except Exception as e:
             self.show_error(f"Помилка підключення: {e}")
             return
@@ -57,9 +52,7 @@ class ChatClient:
         self.running = True
         self.open_chat_window()
 
-        self.win.after(100, lambda: threading.Thread(
-            target=self.receive_messages, daemon=True
-        ).start())
+        threading.Thread(target=self.receive_messages, daemon=True).start()
 
     def show_error(self, message):
         err = CTkToplevel(self.win)
@@ -101,12 +94,12 @@ class ChatClient:
         self.chat_root.protocol("WM_DELETE_WINDOW", self.close_client)
 
     def receive_messages(self):
-        print("🔄 Потік прийому запущено")
         while self.running:
             try:
                 data = self.sock.recv(4096)
                 if not data:
                     break
+
                 self.buffer += data.decode('utf-8')
 
                 while True:
@@ -117,41 +110,35 @@ class ChatClient:
                         break
 
                     if msg_idx != -1 and (users_idx == -1 or msg_idx < users_idx):
-                        end_idx = self.buffer.find("MSG:", msg_idx + 4)
-                        if end_idx == -1:
-                            end_idx = self.buffer.find("USERS:", msg_idx + 4)
-                        if end_idx == -1:
-                            end_idx = len(self.buffer)
-                        line = self.buffer[msg_idx:end_idx].strip()
-                        self.buffer = self.buffer[end_idx:]
+                        end = self.buffer.find("\n", msg_idx)
+                        if end == -1:
+                            end = len(self.buffer)
+                        line = self.buffer[msg_idx:end].strip()
+                        self.buffer = self.buffer[end:]
                         msg = line[4:].strip()
                         if msg:
-                            self.chat_root.after_idle(lambda m=msg: self.add_message(m))
+                            # Fix late binding in lambda
+                            self.chat_root.after_idle(self.add_message, msg)
 
                     elif users_idx != -1:
-                        end_idx = self.buffer.find("MSG:", users_idx + 6)
-                        if end_idx == -1:
-                            end_idx = self.buffer.find("USERS:", users_idx + 6)
-                        if end_idx == -1:
-                            end_idx = len(self.buffer)
-                        line = self.buffer[users_idx:end_idx].strip()
-                        self.buffer = self.buffer[end_idx:]
+                        end = self.buffer.find("\n", users_idx)
+                        if end == -1:
+                            end = len(self.buffer)
+                        line = self.buffer[users_idx:end].strip()
+                        self.buffer = self.buffer[end:]
                         users_str = line[6:].strip()
                         users = [u.strip() for u in users_str.split(",") if u.strip()]
-                        self.chat_root.after_idle(lambda u=users: self.update_user_list(u))
-            except:
+                        self.chat_root.after_idle(self.update_user_list, users)
+
+            except Exception:
                 break
 
         self.running = False
-        try:
-            self.sock.close()
-        except:
-            pass
-        self.chat_root.after_idle(lambda: self.add_message("⚠️ З'єднання закрито."))
+        self.chat_root.after_idle(self.add_message, "З'єднання втрачено.")
 
-    def add_message(self, data: str):
+    def add_message(self, text):
         self.text_area.configure(state="normal")
-        self.text_area.insert("end", data + "\n")
+        self.text_area.insert("end", text + "\n")
         self.text_area.see("end")
         self.text_area.configure(state="disabled")
 
@@ -160,26 +147,22 @@ class ChatClient:
         self.user_list.delete("1.0", "end")
         for u in users:
             if "(" in u and ")" in u:
-                name = u.split("(")[0].strip()
-                lemons = u.split("(")[1].split(")")[0]
-                self.user_list.insert("end", f"{name} 🍋 {lemons}\n")
+                name, lemons = u.split("(")
+                lemons = lemons.replace(")", "").strip()
+                self.user_list.insert("end", f"{name.strip()} 🍋 {lemons}\n")
             else:
                 self.user_list.insert("end", f"{u}\n")
         self.user_list.configure(state="disabled")
 
     def send_message(self):
         msg = self.entry.get().strip()
-        if msg:
-            try:
-                if msg.startswith("+lemon"):
-                    self.sock.send(msg.encode('utf-8'))
-                    self.add_message(f"🍋 Ви подарували лимон! ({msg})")
-                else:
-                    self.sock.send(msg.encode('utf-8'))
-            except:
-                self.add_message("⚠️ Втрачено зв'язок із сервером!")
-                self.running = False
-            self.entry.delete(0, "end")
+        if not msg:
+            return
+        try:
+            self.sock.send(msg.encode('utf-8'))
+        except:
+            self.add_message("Помилка відправлення.")
+        self.entry.delete(0, "end")
 
     def close_client(self):
         self.running = False
