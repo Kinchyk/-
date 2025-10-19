@@ -2,7 +2,6 @@ import socket
 import threading
 from customtkinter import *
 
-
 class ChatClient:
     def __init__(self):
         self.sock = None
@@ -14,18 +13,18 @@ class ChatClient:
 
         self.win = CTk()
         self.win.geometry("400x300")
-        self.win.title("OP Overlord 🍋")
+        self.win.title("Chat")
 
-        CTkLabel(self.win, text="Nickname:", font=("Arial", 14, "bold")).pack(pady=5)
-        self.nickname_entry = CTkEntry(self.win, placeholder_text="Anon")
+        CTkLabel(self.win, text="Nickname:").pack(pady=5)
+        self.nickname_entry = CTkEntry(self.win)
         self.nickname_entry.pack(pady=5)
 
-        CTkLabel(self.win, text="Host:", font=("Arial", 14, "bold")).pack(pady=5)
-        self.host_entry = CTkEntry(self.win, placeholder_text="127.0.0.1")
+        CTkLabel(self.win, text="Host:").pack(pady=5)
+        self.host_entry = CTkEntry(self.win)
         self.host_entry.pack(pady=5)
 
-        CTkLabel(self.win, text="Port:", font=("Arial", 14, "bold")).pack(pady=5)
-        self.port_entry = CTkEntry(self.win, placeholder_text="8081")
+        CTkLabel(self.win, text="Port:").pack(pady=5)
+        self.port_entry = CTkEntry(self.win)
         self.port_entry.pack(pady=5)
 
         CTkButton(self.win, text="Login", command=self.connect_server).pack(pady=20)
@@ -38,32 +37,22 @@ class ChatClient:
         try:
             self.port = int(self.port_entry.get().strip() or 8081)
         except ValueError:
-            self.show_error("Невірний порт")
             return
 
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.host, self.port))
             self.sock.send(self.nickname.encode('utf-8'))
-        except Exception as e:
-            self.show_error(f"Помилка підключення: {e}")
+        except:
             return
 
         self.running = True
         self.open_chat_window()
-
         threading.Thread(target=self.receive_messages, daemon=True).start()
-
-    def show_error(self, message):
-        err = CTkToplevel(self.win)
-        err.title("Помилка")
-        err.geometry("300x100")
-        CTkLabel(err, text=message, text_color="red").pack(pady=20)
-        CTkButton(err, text="OK", command=err.destroy).pack()
 
     def open_chat_window(self):
         self.chat_root = self.win
-        self.chat_root.title(f"Чат ({self.nickname}) 🍋")
+        self.chat_root.title(f"Чат ({self.nickname})")
         self.chat_root.geometry("700x500")
 
         for w in self.chat_root.winfo_children():
@@ -78,16 +67,16 @@ class ChatClient:
         entry_frame = CTkFrame(main_frame)
         entry_frame.pack(fill="x")
 
-        self.entry = CTkEntry(entry_frame, placeholder_text="Введіть повідомлення...")
+        self.entry = CTkEntry(entry_frame)
         self.entry.pack(side="left", fill="x", expand=True, padx=5, pady=5)
         self.entry.bind("<Return>", lambda e: self.send_message())
 
-        CTkButton(entry_frame, text="▶️", width=50, command=self.send_message).pack(side="right", padx=5)
+        CTkButton(entry_frame, text="Send", width=50, command=self.send_message).pack(side="right", padx=5)
 
         side_frame = CTkFrame(self.chat_root, width=150)
         side_frame.pack(side="right", fill="y", padx=10, pady=10)
 
-        CTkLabel(side_frame, text="Користувачі", font=("Arial", 16)).pack(pady=10)
+        CTkLabel(side_frame, text="Користувачі").pack(pady=10)
         self.user_list = CTkTextbox(side_frame, state="disabled", width=120)
         self.user_list.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -99,38 +88,17 @@ class ChatClient:
                 data = self.sock.recv(4096)
                 if not data:
                     break
-
                 self.buffer += data.decode('utf-8')
 
-                while True:
-                    msg_idx = self.buffer.find("MSG:")
-                    users_idx = self.buffer.find("USERS:")
-
-                    if msg_idx == -1 and users_idx == -1:
-                        break
-
-                    if msg_idx != -1 and (users_idx == -1 or msg_idx < users_idx):
-                        end = self.buffer.find("\n", msg_idx)
-                        if end == -1:
-                            end = len(self.buffer)
-                        line = self.buffer[msg_idx:end].strip()
-                        self.buffer = self.buffer[end:]
-                        msg = line[4:].strip()
-                        if msg:
-                            # Fix late binding in lambda
-                            self.chat_root.after_idle(self.add_message, msg)
-
-                    elif users_idx != -1:
-                        end = self.buffer.find("\n", users_idx)
-                        if end == -1:
-                            end = len(self.buffer)
-                        line = self.buffer[users_idx:end].strip()
-                        self.buffer = self.buffer[end:]
-                        users_str = line[6:].strip()
-                        users = [u.strip() for u in users_str.split(",") if u.strip()]
+                while "\n" in self.buffer:
+                    line, self.buffer = self.buffer.split("\n", 1)
+                    if line.startswith("MSG:"):
+                        self.chat_root.after_idle(self.add_message, line[4:])
+                    elif line.startswith("USERS:"):
+                        users = [u.strip() for u in line[6:].split(",") if u.strip()]
                         self.chat_root.after_idle(self.update_user_list, users)
 
-            except Exception:
+            except:
                 break
 
         self.running = False
@@ -147,11 +115,9 @@ class ChatClient:
         self.user_list.delete("1.0", "end")
         for u in users:
             if "(" in u and ")" in u:
-                name, lemons = u.split("(")
-                lemons = lemons.replace(")", "").strip()
-                self.user_list.insert("end", f"{name.strip()} 🍋 {lemons}\n")
-            else:
-                self.user_list.insert("end", f"{u}\n")
+                name, count = u.split("(")
+                count = count.replace(")", "").strip()
+                self.user_list.insert("end", f"{name.strip()}: {count}\n")
         self.user_list.configure(state="disabled")
 
     def send_message(self):
