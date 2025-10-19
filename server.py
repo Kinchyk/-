@@ -1,17 +1,19 @@
 import socket
 import threading
 from customtkinter import *
+import queue
 
 HOST = 'localhost'
 PORT = 8081
 
-clients = {}     # socket -> nickname
-lemons = {}      # nickname -> кількість лимонів
-messages_sent = {}  # nickname -> кількість повідомлень
+clients = {}
+lemons = {}
+messages_sent = {}
 lock = threading.Lock()
 
+ui_queue = queue.Queue()
 
-# ---------------- GUI SERVER ----------------
+
 class ServerUI:
     def __init__(self):
         self.root = CTk()
@@ -34,45 +36,54 @@ class ServerUI:
         self.user_container = CTkScrollableFrame(user_frame, width=230)
         self.user_container.pack(fill="both", expand=True)
 
-        self.user_buttons = {}  # nickname -> frame
-
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        # Постійна перевірка черги
+        self.root.after(100, self.process_ui_queue)
+
+    def process_ui_queue(self):
+        """Обробляє дії, надіслані з інших потоків"""
+        try:
+            while True:
+                func = ui_queue.get_nowait()
+                func()
+        except queue.Empty:
+            pass
+        self.root.after(100, self.process_ui_queue)
+
     def log(self, message):
-        """Додає рядок у консоль"""
-        self.console.configure(state="normal")
-        self.console.insert("end", message + "\n")
-        self.console.see("end")
-        self.console.configure(state="disabled")
+        """Додає рядок у консоль (через чергу, щоб не зависло)"""
+        def do_log():
+            self.console.configure(state="normal")
+            self.console.insert("end", message + "\n")
+            self.console.see("end")
+            self.console.configure(state="disabled")
+
+        ui_queue.put(do_log)
 
     def refresh_user_list(self):
         """Оновлення списку користувачів"""
-        for child in self.user_container.winfo_children():
-            child.destroy()
+        def do_refresh():
+            for child in self.user_container.winfo_children():
+                child.destroy()
 
-        with lock:
-            for nick, count in lemons.items():
-                frame = CTkFrame(self.user_container)
-                frame.pack(fill="x", pady=3)
+            with lock:
+                for nick, count in lemons.items():
+                    frame = CTkFrame(self.user_container)
+                    frame.pack(fill="x", pady=3)
 
-                CTkLabel(frame, text=f"{nick}: {count} 🍋", width=150, anchor="w").pack(side="left", padx=5)
-                CTkButton(frame, text="+", width=30, command=lambda n=nick: self.add_lemon(n)).pack(side="left", padx=2)
-                CTkButton(frame, text="-", width=30, command=lambda n=nick: self.remove_lemon(n)).pack(side="left", padx=2)
+                    CTkLabel(frame, text=f"{nick}: {count} 🍋", width=150, anchor="w").pack(side="left", padx=5)
+                    CTkButton(frame, text="+", width=30,
+                              command=lambda n=nick: self.safe_add_lemon(n)).pack(side="left", padx=2)
+                    CTkButton(frame, text="-", width=30,
+                              command=lambda n=nick: self.safe_remove_lemon(n)).pack(side="left", padx=2)
+        ui_queue.put(do_refresh)
 
-    def add_lemon(self, nickname):
-        with lock:
-            if nickname in lemons:
-                lemons[nickname] += 1
-                broadcast(f"MSG:🍋 Сервер подарував лимон {nickname}!")
-                broadcast_user_list()
-        self.refresh_user_list()
+    def safe_add_lemon(self, nickname):
+        threading.Thread(target=add_lemon_logic, args=(nickname,), daemon=True).start()
 
-    def remove_lemon(self, nickname):
-        with lock:
-            if nickname in lemons and lemons[nickname] > 0:
-                lemons[nickname] -= 1
-                broadcast_user_list()
-        self.refresh_user_list()
+    def safe_remove_lemon(self, nickname):
+        threading.Thread(target=remove_lemon_logic, args=(nickname,), daemon=True).start()
 
     def on_close(self):
         self.root.destroy()
@@ -81,7 +92,6 @@ class ServerUI:
 ui = ServerUI()
 
 
-# ---------------- NETWORK ----------------
 def broadcast(message):
     with lock:
         for client in list(clients.keys()):
@@ -100,6 +110,21 @@ def broadcast_user_list():
         users_str = ",".join(users)
     broadcast("USERS:" + users_str)
     ui.refresh_user_list()
+
+
+def add_lemon_logic(nickname):
+    with lock:
+        if nickname in lemons:
+            lemons[nickname] += 1
+            broadcast(f"MSG:🍋 Сервер подарував лимон {nickname}!")
+            broadcast_user_list()
+
+
+def remove_lemon_logic(nickname):
+    with lock:
+        if nickname in lemons and lemons[nickname] > 0:
+            lemons[nickname] -= 1
+            broadcast_user_list()
 
 
 def remove_client(sock):
